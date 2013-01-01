@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdbool.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -134,7 +135,7 @@ static int benchmark_in(uint8_t ep)
     return 1;
 }
 
-static void measure(void)
+unsigned int measure(void)
 {
 	struct timeval tv_stop;
 	unsigned int diff_msec;
@@ -146,15 +147,14 @@ static void measure(void)
 
 	printf("%lu transfers (total %lu bytes) in %u miliseconds => %lu bytes/sec\n",
 		num_xfer, num_bytes, diff_msec, (num_bytes*1000)/diff_msec);
+
+    return num_bytes;
 }
 
-JNIEXPORT jboolean JNICALL
-Java_org_au_id_jms_UsbAudio_stop(JNIEnv* env UNUSED, jobject foo UNUSED)
-{
-    measure();
-    do_exit = 1;
+JNIEXPORT jint JNICALL
+Java_au_id_jms_usbaudio_UsbAudio_measure(JNIEnv* env UNUSED, jobject foo UNUSED) {
+    return measure();
 }
-
 
 JNIEXPORT jint JNICALL
 JNI_OnLoad(JavaVM* vm UNUSED, void* reserved UNUSED)
@@ -164,21 +164,22 @@ JNI_OnLoad(JavaVM* vm UNUSED, void* reserved UNUSED)
 }
 
 JNIEXPORT jboolean JNICALL
-Java_org_au_id_jms_UsbAudio_start(JNIEnv* env UNUSED, jobject foo UNUSED)
+Java_au_id_jms_usbaudio_UsbAudio_setup(JNIEnv* env UNUSED, jobject foo UNUSED)
 {
 	int rc;
 
 	rc = libusb_init(NULL);
 	if (rc < 0) {
 		LOGD("Error initializing libusb: %s\n", libusb_error_name(rc));
-		exit(1);
+        return false;
 	}
 
     /* This device is the TI PCM2900C Audio CODEC default VID/PID. */
 	devh = libusb_open_device_with_vid_pid(NULL, 0x08bb, 0x29c0);
 	if (!devh) {
 		LOGD("Error finding USB device\n");
-		goto out;
+        libusb_exit(NULL);
+        return false;
 	}
 
     rc = libusb_kernel_driver_active(devh, IFACE_NUM);
@@ -187,36 +188,58 @@ Java_org_au_id_jms_UsbAudio_start(JNIEnv* env UNUSED, jobject foo UNUSED)
         if (rc < 0) {
             LOGD("Could not detach kernel driver: %s\n",
                     libusb_error_name(rc));
-            goto out;
+            libusb_close(devh);
+            libusb_exit(NULL);
+            return false;
         }
     }
 
 	rc = libusb_claim_interface(devh, IFACE_NUM);
 	if (rc < 0) {
 		LOGD("Error claiming interface: %s\n", libusb_error_name(rc));
-		goto out;
-	}
+        libusb_close(devh);
+        libusb_exit(NULL);
+        return false;
+    }
 
 	rc = libusb_set_interface_alt_setting(devh, IFACE_NUM, 1);
 	if (rc < 0) {
 		LOGD("Error setting alt setting: %s\n", libusb_error_name(rc));
-		goto out;
+        libusb_close(devh);
+        libusb_exit(NULL);
+        return false;
 	}
 
+    // Good to go
 	benchmark_in(EP_ISO_IN);
+}
 
-	while (!do_exit) {
-		rc = libusb_handle_events(NULL);
-		if (rc != LIBUSB_SUCCESS)
-			break;
-	}
 
-	/* Measurement has already been done by the signal handler. */
+JNIEXPORT void JNICALL
+Java_au_id_jms_usbaudio_UsbAudio_stop(JNIEnv* env UNUSED, jobject foo UNUSED) {
+    do_exit = 1;
+    measure();
+}
 
+JNIEXPORT bool JNICALL
+Java_au_id_jms_usbaudio_UsbAudio_close(JNIEnv* env UNUSED, jobject foo UNUSED) {
+    if (do_exit == 0) {
+        return false;
+    }
 	libusb_release_interface(devh, IFACE_NUM);
-out:
 	if (devh)
 		libusb_close(devh);
 	libusb_exit(NULL);
-	return rc;
+    return true;
 }
+
+
+JNIEXPORT void JNICALL
+Java_au_id_jms_usbaudio_UsbAudio_loop(JNIEnv* env UNUSED, jobject foo UNUSED) {
+	while (!do_exit) {
+		int rc = libusb_handle_events(NULL);
+		if (rc != LIBUSB_SUCCESS)
+			break;
+	}
+}
+
