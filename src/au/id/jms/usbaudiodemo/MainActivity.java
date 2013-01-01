@@ -11,23 +11,15 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
-import android.hardware.usb.UsbDeviceConnection;
-import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
-import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentActivity;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.app.FragmentPagerAdapter;
-import android.support.v4.view.ViewPager;
 import android.util.Log;
-import android.view.Gravity;
-import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.TextView;
+import android.widget.Button;
+import au.id.jms.usbaudio.UsbAudio;
 
 public class MainActivity extends FragmentActivity {
 	
@@ -37,25 +29,10 @@ public class MainActivity extends FragmentActivity {
     PendingIntent mPermissionIntent = null;
     UsbManager mUsbManager = null;
     UsbDevice mAudioDevice = null;
-
-    /**
-     * The {@link android.support.v4.view.PagerAdapter} that will provide
-     * fragments for each of the sections. We use a
-     * {@link android.support.v4.app.FragmentPagerAdapter} derivative, which
-     * will keep every loaded fragment in memory. If this becomes too memory
-     * intensive, it may be best to switch to a
-     * {@link android.support.v4.app.FragmentStatePagerAdapter}.
-     */
-    SectionsPagerAdapter mSectionsPagerAdapter;
     
-    UsbComms mUsb = null;
+    UsbAudio mUsbAudio = null;
 
-    /**
-     * The {@link ViewPager} that will host the section contents.
-     */
-    ViewPager mViewPager;
-
-	private UsbEndpoint mUsbAudioEp;
+	Thread mUsbThread = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -63,10 +40,8 @@ public class MainActivity extends FragmentActivity {
         setContentView(R.layout.activity_main);
         
         Log.d(TAG, "Hello, World!");
-//        mUsb = new UsbComms(getApplicationContext());
-//        mUsb.init();
         
-        
+        // Grab the USB Device so we can get permission
         mUsbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
         HashMap<String, UsbDevice> deviceList = mUsbManager.getDeviceList();
         Iterator<UsbDevice> deviceIterator = deviceList.values().iterator();
@@ -79,22 +54,56 @@ public class MainActivity extends FragmentActivity {
     		}
         }
         
+        // Load native lib
+    	mUsbAudio = new UsbAudio();
+    	
+    	// Buttons
+		final Button startButton = (Button) findViewById(R.id.button1);
+		final Button stopButton = (Button) findViewById(R.id.button2);
+		
+		startButton.setEnabled(true);
+		stopButton.setEnabled(false);
+		
+		startButton.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				Log.d(TAG, "Start pressed");
+		    	if (mUsbAudio.setup() == true) {
+		    		startButton.setEnabled(false);
+		    		stopButton.setEnabled(true);
+		    	}
+		    	
+		        new Thread(new Runnable() {
+		            public void run() {
+		            	while (true) {
+		            		mUsbAudio.loop();
+		            	}
+		            }
+		        }).start();
+			}
+		});
+		
+		stopButton.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				Log.d(TAG, "Stop pressed");
+		    	mUsbAudio.stop();
+		    	mUsbAudio.close();
+		    	
+	    		startButton.setEnabled(true);
+	    		stopButton.setEnabled(false);
+			}
+		});
+        
         // Register for permission
-        PendingIntent mPermissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), 0);
+        mPermissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), 0);
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
         registerReceiver(new UsbReciever(), filter);
         
         // Request permission from user
-        mUsbManager.requestPermission(mAudioDevice, mPermissionIntent);
-
-        // Create the adapter that will return a fragment for each of the three
-        // primary sections of the app.
-        mSectionsPagerAdapter = new SectionsPagerAdapter(getSupportFragmentManager());
-
-        // Set up the ViewPager with the sections adapter.
-        mViewPager = (ViewPager) findViewById(R.id.pager);
-        mViewPager.setAdapter(mSectionsPagerAdapter);
-
+        if (mAudioDevice != null && mPermissionIntent != null) {
+        	mUsbManager.requestPermission(mAudioDevice, mPermissionIntent);
+        } else {
+        	Log.e(TAG, "Device not present? Can't request peremission");
+        }
     }
 
     @Override
@@ -103,93 +112,10 @@ public class MainActivity extends FragmentActivity {
         getMenuInflater().inflate(R.menu.activity_main, menu);
         return true;
     }
-    
-    /**
-     * A {@link FragmentPagerAdapter} that returns a fragment corresponding to
-     * one of the sections/tabs/pages.
-     */
-    public class SectionsPagerAdapter extends FragmentPagerAdapter {
 
-        public SectionsPagerAdapter(FragmentManager fm) {
-            super(fm);
-        }
-
-        @Override
-        public Fragment getItem(int position) {
-            // getItem is called to instantiate the fragment for the given page.
-            // Return a DummySectionFragment (defined as a static inner class
-            // below) with the page number as its lone argument.
-            Fragment fragment = new DummySectionFragment();
-            Bundle args = new Bundle();
-            args.putInt(DummySectionFragment.ARG_SECTION_NUMBER, position + 1);
-            fragment.setArguments(args);
-            return fragment;
-        }
-
-        @Override
-        public int getCount() {
-            // Show 3 total pages.
-            return 3;
-        }
-
-        @Override
-        public CharSequence getPageTitle(int position) {
-            switch (position) {
-                case 0:
-                    return getString(R.string.title_section1).toUpperCase();
-                case 1:
-                    return getString(R.string.title_section2).toUpperCase();
-                case 2:
-                    return getString(R.string.title_section3).toUpperCase();
-            }
-            return null;
-        }
-    }
-
-    /**
-     * A dummy fragment representing a section of the app, but that simply
-     * displays dummy text.
-     */
-    public static class DummySectionFragment extends Fragment {
-        /**
-         * The fragment argument representing the section number for this
-         * fragment.
-         */
-        public static final String ARG_SECTION_NUMBER = "section_number";
-
-        public DummySectionFragment() {
-        }
-
-        @Override
-        public View onCreateView(LayoutInflater inflater, ViewGroup container,
-                Bundle savedInstanceState) {
-            // Create a new TextView and set its text to the fragment's section
-            // number argument value.
-            TextView textView = new TextView(getActivity());
-            textView.setGravity(Gravity.CENTER);
-            textView.setText(Integer.toString(getArguments().getInt(ARG_SECTION_NUMBER)));
-            return textView;
-        }
-    }
-    
     private void setDevice(UsbDevice device) {
-
-		UsbDeviceConnection connection = mUsbManager.openDevice(device);
-		if (connection == null) {
-			Log.e(TAG, "Couldn't open device: " + device);
-		}
-		Log.d(TAG, "Device class is usb? " + (device.getDeviceClass() == UsbConstants.USB_CLASS_AUDIO));
-		Log.d(TAG, "interface count: " + device.getInterfaceCount());
-		UsbInterface intf = device.getInterface(2);
-		if (connection != null && connection.claimInterface(intf, true)) {
-			Log.d(TAG, "Opened device. " + intf.getEndpointCount() + " endpoints");
-			UsbEndpoint ep = intf.getEndpoint(0x84);
-			if (ep.getDirection() == UsbConstants.USB_DIR_IN &&
-					(ep.getType() & UsbConstants.USB_ENDPOINT_XFERTYPE_MASK) == UsbConstants.USB_ENDPOINT_XFER_ISOC) {
-				Log.d(TAG, "Found the correct input");
-				mUsbAudioEp = ep;
-			}
-		}
+    	// Set button to enabled when permission is obtained
+    	((Button) findViewById(R.id.button1)).setEnabled(device != null);
     }
     
     private class UsbReciever extends BroadcastReceiver {
