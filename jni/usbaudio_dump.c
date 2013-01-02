@@ -53,19 +53,39 @@
 #define EP_ISO_IN	0x84
 #define IFACE_NUM   2
 
-static int logfd;
-
 static int do_exit = 1;
 static struct libusb_device_handle *devh = NULL;
 
 static unsigned long num_bytes = 0, num_xfer = 0;
 static struct timeval tv_start;
 
+static JavaVM* java_vm = NULL;
+
+static jclass au_id_jms_usbaudio_AudioPlayback = NULL;
+static jmethodID au_id_jms_usbaudio_AudioPlayback_write;
+
 static void cb_xfr(struct libusb_transfer *xfr)
 {
 	unsigned int i;
 
     int len = 0;
+
+    // Get an env handle
+    JNIEnv * env;
+    void * void_env;
+    bool had_to_attach = false;
+    jint status = (*java_vm)->GetEnv(java_vm, &void_env, JNI_VERSION_1_6);
+
+    if (status == JNI_EDETACHED) {
+        (*java_vm)->AttachCurrentThread(java_vm, &env, NULL);
+        had_to_attach = true;
+    } else {
+        env = void_env;
+    }
+
+    // Create a jbyteArray.
+    int start = 0;
+    jbyteArray audioByteArray = (*env)->NewByteArray(env, 192 * xfr->num_iso_packets);
 
     for (i = 0; i < xfr->num_iso_packets; i++) {
         struct libusb_iso_packet_descriptor *pack = &xfr->iso_packet_desc[i];
@@ -78,13 +98,27 @@ static void cb_xfr(struct libusb_transfer *xfr)
         }
 
         const uint8_t *data = libusb_get_iso_packet_buffer_simple(xfr, i);
-        write(logfd, data, pack->length);
+        (*env)->SetByteArrayRegion(env, audioByteArray, len, pack->length, data);
 
         len += pack->length;
     }
 
+    // Call write()
+    (*env)->CallStaticObjectMethod(env, au_id_jms_usbaudio_AudioPlayback,
+            au_id_jms_usbaudio_AudioPlayback_write, audioByteArray);
+    (*env)->DeleteLocalRef(env, audioByteArray);
+    if ((*env)->ExceptionCheck(env)) {
+        LOGD("Exception while trying to pass sound data to java");
+        return;
+    }
+
 	num_bytes += len;
 	num_xfer++;
+
+    if (had_to_attach) {
+        (*java_vm)->DetachCurrentThread(java_vm);
+    }
+
 
 	if (libusb_submit_transfer(xfr) < 0) {
 		LOGD("error re-submitting URB\n");
@@ -130,15 +164,6 @@ static int benchmark_in(uint8_t ep)
         libusb_submit_transfer(xfr[i]);
     }
 
-    static const char* dump_filename = "/storage/sdcard0/test-file.raw";
-    LOGD("Opening dump file: %s", dump_filename);
-    logfd = open(dump_filename, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP);
-    if (logfd < 0) {
-        LOGD("Cannot open file: %s", strerror(errno));
-        return errno;
-    }
-
-
 	gettimeofday(&tv_start, NULL);
 
     return 1;
@@ -166,10 +191,25 @@ Java_au_id_jms_usbaudio_UsbAudio_measure(JNIEnv* env UNUSED, jobject foo UNUSED)
 }
 
 JNIEXPORT jint JNICALL
-JNI_OnLoad(JavaVM* vm UNUSED, void* reserved UNUSED)
+JNI_OnLoad(JavaVM* vm, void* reserved UNUSED)
 {
     LOGD("libusbaudio: loaded");
+    java_vm = vm;
+
     return JNI_VERSION_1_6;
+}
+
+
+JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved UNUSED)
+{
+    JNIEnv * env;
+    void * void_env;
+    (*java_vm)->GetEnv(vm, &void_env, JNI_VERSION_1_6);
+    env = void_env;
+
+    (*env)->DeleteGlobalRef(env, au_id_jms_usbaudio_AudioPlayback);
+
+    LOGD("libusbaudio: unloaded");
 }
 
 JNIEXPORT jboolean JNICALL
@@ -218,6 +258,27 @@ Java_au_id_jms_usbaudio_UsbAudio_setup(JNIEnv* env UNUSED, jobject foo UNUSED)
         libusb_exit(NULL);
         return false;
 	}
+
+    // Get write callback handle
+    jclass clazz = (*env)->FindClass(env, "au/id/jms/usbaudio/AudioPlayback"); 
+    if (!clazz) {
+        LOGD("Could not find au.id.jms.usbaudio.AudioPlayback");
+        libusb_close(devh);
+        libusb_exit(NULL);
+        return false;
+    }
+    au_id_jms_usbaudio_AudioPlayback = (*env)->NewGlobalRef(env, clazz);
+
+    au_id_jms_usbaudio_AudioPlayback_write = (*env)->GetStaticMethodID(env,
+            au_id_jms_usbaudio_AudioPlayback, "write", "([B)V");
+    if (!au_id_jms_usbaudio_AudioPlayback_write) {
+        LOGD("Could not find au.id.jms.usbaudio.AudioPlayback");
+        (*env)->DeleteGlobalRef(env, au_id_jms_usbaudio_AudioPlayback);
+        libusb_close(devh);
+        libusb_exit(NULL);
+        return false;
+    }
+
 
     // Good to go
     do_exit = 0;
