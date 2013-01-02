@@ -118,8 +118,10 @@ static int benchmark_in(uint8_t ep)
 	 */
     for (i=0; i<NUM_TRANSFERS; i++) {
         xfr[i] = libusb_alloc_transfer(num_iso_pack);
-        if (!xfr[i])
+        if (!xfr[i]) {
+            LOGD("Could not allocate transfer");
             return -ENOMEM;
+        }
 
         libusb_fill_iso_transfer(xfr[i], devh, ep, buf,
                 sizeof(buf), num_iso_pack, cb_xfr, NULL, 1000);
@@ -128,7 +130,14 @@ static int benchmark_in(uint8_t ep)
         libusb_submit_transfer(xfr[i]);
     }
 
-    logfd = open("/storage/sdcard0/test-file.raw", O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP);
+    static const char* dump_filename = "/storage/sdcard0/test-file.raw";
+    LOGD("Opening dump file: %s", dump_filename);
+    logfd = open(dump_filename, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP);
+    if (logfd < 0) {
+        LOGD("Cannot open file: %s", strerror(errno));
+        return errno;
+    }
+
 
 	gettimeofday(&tv_start, NULL);
 
@@ -212,7 +221,12 @@ Java_au_id_jms_usbaudio_UsbAudio_setup(JNIEnv* env UNUSED, jobject foo UNUSED)
 
     // Good to go
     do_exit = 0;
-	benchmark_in(EP_ISO_IN);
+    LOGD("Starting capture");
+	if ((rc = benchmark_in(EP_ISO_IN)) < 0) {
+        LOGD("Capture failed to start: %d", rc);
+        return false;
+    }
+    return true;
 }
 
 
