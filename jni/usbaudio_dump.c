@@ -55,7 +55,7 @@
 
 static int logfd;
 
-static int do_exit = 0;
+static int do_exit = 1;
 static struct libusb_device_handle *devh = NULL;
 
 static unsigned long num_bytes = 0, num_xfer = 0;
@@ -211,6 +211,7 @@ Java_au_id_jms_usbaudio_UsbAudio_setup(JNIEnv* env UNUSED, jobject foo UNUSED)
 	}
 
     // Good to go
+    do_exit = 0;
 	benchmark_in(EP_ISO_IN);
 }
 
