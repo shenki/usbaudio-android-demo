@@ -21,6 +21,7 @@ import android.util.Log;
 import android.view.Menu;
 import android.view.View;
 import android.widget.Button;
+import au.id.jms.usbaudio.AudioPlayback;
 import au.id.jms.usbaudio.UsbAudio;
 
 public class MainActivity extends FragmentActivity {
@@ -35,6 +36,8 @@ public class MainActivity extends FragmentActivity {
     UsbAudio mUsbAudio = null;
 
 	Thread mUsbThread = null;
+
+	private UsbReciever mUsbPermissionReciever;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,6 +64,8 @@ public class MainActivity extends FragmentActivity {
         UsbHelper.useContext(getApplicationContext());
         
     	mUsbAudio = new UsbAudio();
+    	
+    	AudioPlayback.setup();
     	
     	// Buttons
 		final Button startButton = (Button) findViewById(R.id.button1);
@@ -101,7 +106,8 @@ public class MainActivity extends FragmentActivity {
         // Register for permission
         mPermissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), 0);
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
-        registerReceiver(new UsbReciever(), filter);
+        mUsbPermissionReciever = new UsbReciever();
+        registerReceiver(mUsbPermissionReciever, filter);
         
         // Request permission from user
         if (mAudioDevice != null && mPermissionIntent != null) {
@@ -109,6 +115,15 @@ public class MainActivity extends FragmentActivity {
         } else {
         	Log.e(TAG, "Device not present? Can't request peremission");
         }
+    }
+    
+    @Override
+    protected void onDestroy() {
+    	unregisterReceiver(mUsbPermissionReciever);
+    	if (mUsbAudio != null) {
+    		mUsbAudio.stop();
+    		mUsbAudio.close();
+    	}
     }
 
     @Override
