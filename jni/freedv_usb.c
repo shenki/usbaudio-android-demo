@@ -157,6 +157,9 @@ int usb_start_transfers(int fd) {
     int i;
 
     outfd = fd;
+    if (outfd < 3) {
+        LOGD("Set outfd to %d. Are you sure?\n", outfd);
+    }
 
     for (i=0; i<NUM_TRANSFERS; i++) {
         xfr[i] = libusb_alloc_transfer(num_iso_pack);
