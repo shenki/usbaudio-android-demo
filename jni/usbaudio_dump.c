@@ -104,7 +104,7 @@ static void cb_xfr(struct libusb_transfer *xfr)
     }
 
     // Call write()
-    (*env)->CallStaticObjectMethod(env, au_id_jms_usbaudio_AudioPlayback,
+    (*env)->CallStaticVoidMethod(env, au_id_jms_usbaudio_AudioPlayback,
             au_id_jms_usbaudio_AudioPlayback_write, audioByteArray);
     (*env)->DeleteLocalRef(env, audioByteArray);
     if ((*env)->ExceptionCheck(env)) {
